@@ -1,0 +1,202 @@
+#!/bin/bash
+
+script_dir=$(realpath "$(dirname "$0")")
+. $script_dir/../locales/messages_en.conf
+
+PHP_VERSION="8.3"
+PHPMYADMIN_VERSION="5.2.1"
+ADMIN_PORT=7878
+DATABASE_ADMIN_PASS=$(tr -dc 'A-Za-z0-9_@#%^&+=-' < /dev/urandom | head -c 16)
+DEFAULT_EMAIL="admin@server.local"
+
+read -p "$MSG_PROMPT_EMAIL [$MSG_DEFAULT: $DEFAULT_EMAIL]: " EMAIL
+EMAIL=${EMAIL:-$DEFAULT_EMAIL}
+
+# Update package list and upgrade system
+sudo apt update && sudo apt upgrade -y
+
+# Install necessary tools
+sudo apt install -y unzip zip nano openssl wget curl
+
+# Install Nginx
+sudo apt install nginx -y
+
+
+# Add Ondrej PPA for PHP and install PHP with extensions
+sudo apt install software-properties-common -y
+sudo add-apt-repository ppa:ondrej/php -y
+sudo apt update
+
+sudo apt install -y \
+    php${PHP_VERSION} \
+    php${PHP_VERSION}-cli \
+    php${PHP_VERSION}-fpm \
+    php${PHP_VERSION}-mysql \
+    php${PHP_VERSION}-common \
+    php${PHP_VERSION}-opcache \
+    php${PHP_VERSION}-ldap \
+    php${PHP_VERSION}-gd \
+    php${PHP_VERSION}-bcmath \
+    php${PHP_VERSION}-ctype \
+    php${PHP_VERSION}-fileinfo \
+    php${PHP_VERSION}-xml \
+    php${PHP_VERSION}-curl \
+    php${PHP_VERSION}-mbstring \
+    php${PHP_VERSION}-zip
+
+# Install MariaDB
+sudo apt install mariadb-server mariadb-client -y
+
+# Install phpMyAdmin
+sudo rm -rf /usr/share/phpmyadmin
+wget https://files.phpmyadmin.net/phpMyAdmin/${PHPMYADMIN_VERSION}/phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages.zip
+unzip phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages.zip
+sudo mv phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages /usr/share/phpmyadmin
+rm phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages.zip
+
+# Install Certbot
+sudo apt install certbot python3-certbot-nginx -y
+
+if [ "$EMAIL" == "$DEFAULT_EMAIL" ]; then
+  certbot register --non-interactive --agree-tos --register-unsafely-without-email 
+else
+  certbot register --non-interactive --agree-tos --email $EMAIL
+fi
+
+
+# Install Composer
+curl -sS https://getcomposer.org/installer -o composer-setup.php
+php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+rm composer-setup.php
+
+# Check if swap exists, if not create swap
+if ! sudo swapon --show | grep -q "swap"; then
+    sudo fallocate -l 2G /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+
+    sudo sed -i '/\/swapfile/d' /etc/fstab
+    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+fi
+
+
+sudo rm -f /etc/nginx/conf.d/*
+sudo rm -f /etc/nginx/sites-available/*
+sudo rm -f /etc/nginx/sites-enabled/*
+sudo openssl genpkey -algorithm RSA -out /etc/ssl/private/nginx.key -pkeyopt rsa_keygen_bits:2048
+sudo openssl req -new -x509 -key /etc/ssl/private/nginx.key -out /etc/ssl/certs/nginx.crt -days 365 -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
+sudo openssl dhparam -out /etc/ssl/certs/dhparam.pem 2048
+
+sudo tee /etc/nginx/conf.d/default.conf > /dev/null <<EOL
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        return 403;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name _;
+    ssl_certificate /etc/ssl/certs/nginx.crt;
+    ssl_certificate_key /etc/ssl/private/nginx.key;
+    ssl_dhparam /etc/ssl/certs/dhparam.pem;
+
+    location / {
+        return 403;
+    }
+}
+
+server {
+    listen ${ADMIN_PORT};
+    server_name _;
+
+    location / {
+        return 403;
+    }
+
+    location /phpmyadmin {
+        root /usr/share/;
+        index index.php index.html index.htm;
+    }
+
+    location ~ ^/phpmyadmin/(.+\.php)$ {
+        root /usr/share/;
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php${PHP_VERSION}-fpm.sock;
+    }
+
+    location ~ \.php$ {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/var/run/php/php${PHP_VERSION}-fpm.sock;
+	}
+}
+EOL
+
+PHP_FPM_INI_PATH="/etc/php/${PHP_VERSION}/fpm/php.ini"
+sudo sed -i "s/^max_execution_time.*/max_execution_time = 180/" ${PHP_FPM_INI_PATH}
+sudo sed -i "s/^max_input_time.*/max_input_time = 180/" ${PHP_FPM_INI_PATH}
+sudo sed -i "s/^memory_limit.*/memory_limit = 512M/" ${PHP_FPM_INI_PATH}
+sudo sed -i "s/^upload_max_filesize.*/upload_max_filesize = 256M/" ${PHP_FPM_INI_PATH}
+sudo sed -i "s/^post_max_size.*/post_max_size = 256M/" ${PHP_FPM_INI_PATH}
+
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+
+sudo systemctl restart php${PHP_VERSION}-fpm
+sudo systemctl enable php${PHP_VERSION}-fpm
+
+sudo mysql -e "DROP USER IF EXISTS 'admin'@'localhost';"
+sudo mysql -e "CREATE USER 'admin'@'localhost' IDENTIFIED BY '${DATABASE_ADMIN_PASS}';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'admin'@'localhost' WITH GRANT OPTION;"
+sudo mysql -e "FLUSH PRIVILEGES;"
+
+sudo systemctl restart mariadb
+sudo systemctl enable mariadb
+
+
+sudo cp $script_dir/../vpsease /usr/bin
+mkdir -p /etc/vpsease
+cp -r $script_dir/../* /etc/vpsease/
+
+mkdir -p /etc/vpsease/.vpsease
+
+cp -r $script_dir/../../../../version /etc/vpsease/version
+
+version=$(cat /etc/vpsease/version)
+cat >"/etc/vpsease/.vpsease/vpsease" <<END
+#!/bin/bash
+
+DISTRO="ubuntu"
+VERSION="24.04"
+STACK="LEMP"
+ADMIN_PORT="$ADMIN_PORT"
+DATABASE_ADMIN_PASS="$DATABASE_ADMIN_PASS"
+END
+
+chmod -R +x /etc/vpsease/*
+
+clear
+
+# LOCAL_IP=$(hostname -I | awk '{print $1}')
+PUBLIC_IP=$(curl -s ifconfig.me)
+echo "======================================================================"
+echo -e "                           $MSG_NAME v$version                     "
+echo "----------------------------------------------------------------------"
+echo "$MSG_INSTALL_SUCCESS"
+echo "phpMyAdmin: http://$PUBLIC_IP:$ADMIN_PORT/phpmyadmin"
+echo "MySQL: admin | $DATABASE_ADMIN_PASS"
+echo "----------------------------------------------------------------------"
+echo 
+echo "$MSG_REBOOT_5S"
+sleep 5
+sudo reboot
+
+
+
+
+
+

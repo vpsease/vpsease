@@ -1,0 +1,24 @@
+#!/bin/bash
+
+LANG="en"
+    
+case $LANG in
+    "en")
+        . /etc/vpsease/locales/messages_en.conf
+        ;;
+    *)
+        . /etc/vpsease/locales/messages_en.conf
+        ;;
+esac
+
+version() {
+    echo $(cat /etc/vpsease/version)
+}
+
+name()
+{
+    echo "======================================================================"
+    echo -e "                           $MSG_NAME v$(version)                   "
+    echo "----------------------------------------------------------------------"
+    echo
+}

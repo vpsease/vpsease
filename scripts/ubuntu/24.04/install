@@ -1,0 +1,30 @@
+#!/bin/bash
+
+clear
+script_dir=$(realpath "$(dirname "$0")")
+. $script_dir/locales/messages_en.conf
+version=$(cat $script_dir/../../../version)
+
+echo "======================================================================"
+echo -e "                           $MSG_NAME v$version                     "
+echo "----------------------------------------------------------------------"
+echo "                 $MSG_WELCOME                                         "
+echo "----------------------------------------------------------------------"
+
+PS3="$MSG_PROMPT_OPTION"
+options=("$MSG_STACK_LEMP" "$MSG_EXIT")
+
+select opt in "${options[@]}"; do
+    case $opt in
+        "$MSG_STACK_LEMP")
+            $script_dir/inc/lemp-setup
+            exit 0
+            ;;
+        "$MSG_EXIT")
+            exit 0
+            ;;
+        *)
+            echo $MSG_INVALID_OPTION
+            ;;
+    esac
+done

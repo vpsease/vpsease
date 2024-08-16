@@ -1,0 +1,24 @@
+#!/bin/bash
+
+. /etc/vpsease/lib/func
+
+clear
+
+PS3="$MSG_PROMPT"
+options=("$MSG_MANAGE_UPDATE" "$MSG_EXIT")
+name
+select opt in "${options[@]}"; do
+    case $opt in
+        "$MSG_MANAGE_UPDATE")
+            /etc/vpsease/menu/manage_update
+            break
+            ;;
+        "$MSG_EXIT")
+            clear
+            exit 0
+            ;;
+        *)
+            echo $MSG_INVALID_OPTION
+            ;;
+    esac
+done
