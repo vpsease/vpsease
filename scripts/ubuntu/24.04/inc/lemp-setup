@@ -7,6 +7,7 @@ PHP_VERSION="8.3"
 PHPMYADMIN_VERSION="5.2.1"
 ADMIN_PORT=7878
 DATABASE_ADMIN_PASS=$(tr -dc 'A-Za-z0-9_@#%^&+=-' < /dev/urandom | head -c 16)
+USER_ADMIN_PASS=$(tr -dc 'A-Za-z0-9_@#%^&+=-' < /dev/urandom | head -c 16)
 DEFAULT_EMAIL="admin@server.local"
 
 read -p "$MSG_PROMPT_EMAIL [$MSG_DEFAULT: $DEFAULT_EMAIL]: " EMAIL
@@ -46,6 +47,8 @@ sudo apt install -y \
 
 # Install MariaDB
 sudo apt install mariadb-server mariadb-client -y
+
+sudo apt install vsftpd -y
 
 # Install phpMyAdmin
 sudo rm -rf /usr/share/phpmyadmin
@@ -157,6 +160,60 @@ sudo mysql -e "FLUSH PRIVILEGES;"
 sudo systemctl restart mariadb
 sudo systemctl enable mariadb
 
+#sftp
+groupadd sftp-only 2>/dev/null
+
+config='/etc/ssh/sshd_config'
+
+if grep -q "Subsystem.*sftp" $config && ! grep -q "internal" $config; then
+    sed -i "/^Subsystem.*sftp/ s/Subsystem.*sftp/#Subsystem sftp/" $config
+fi
+
+if ! grep -q "Subsystem.*sftp.*internal" $config; then
+{
+    echo " "
+    echo "Subsystem sftp internal-sftp"
+    echo "Match Group sftp-only"
+    echo "    ChrootDirectory /home/%u"
+    echo "    ForceCommand internal-sftp"
+    echo "    AllowTCPForwarding no"
+    echo "    X11Forwarding no"
+    
+} >> $config
+
+service ssh restart >/dev/null 2>&1
+fi
+
+sed -i 's/^\s*#\?\s*anonymous_enable=.*/anonymous_enable=NO/' /etc/vsftpd.conf
+sed -i 's/^\s*#\?\s*local_enable=.*/local_enable=YES/' /etc/vsftpd.conf
+sed -i 's/^\s*#\?\s*write_enable=.*/write_enable=YES/' /etc/vsftpd.conf
+sed -i 's/^\s*#\?\s*local_umask=.*/local_umask=022/' /etc/vsftpd.conf
+sed -i 's/^\s*#\?\s*listen=.*/listen=YES/' /etc/vsftpd.conf
+sed -i 's/^\s*#\?\s*listen_ipv6=.*/listen_ipv6=NO/' /etc/vsftpd.conf
+sed -i 's/^\s*#\?\s*allow_writeable_chroot=.*/allow_writeable_chroot=YES/' /etc/vsftpd.conf
+sed -i 's/^\s*#\?\s*chroot_local_user=.*/chroot_local_user=YES/' /etc/vsftpd.conf
+
+if ! grep -q '^allow_writeable_chroot=' "/etc/vsftpd.conf"; then
+    echo "allow_writeable_chroot=YES" >> "/etc/vsftpd.conf"
+fi
+service vsftpd restart
+
+
+if [ ! -z "$(grep ^admin: /etc/passwd)" ]; then
+    userdel -f admin >/dev/null 2>&1
+    rm -fR /home/admin
+fi
+if [ ! -z "$(grep ^admin: /etc/group)" ]; then
+    groupdel admin > /dev/null 2>&1
+fi
+
+/usr/sbin/useradd "admin" -m -d "/var/www/web"
+echo "admin:$USER_ADMIN_PASS" | /usr/sbin/chpasswd
+usermod -a -G sftp-only admin
+mkdir -p /var/www/web
+chmod 755 /var/www/web
+chown admin:admin /var/www/web
+
 
 sudo cp $script_dir/../vpsease /usr/bin
 mkdir -p /etc/vpsease
@@ -174,10 +231,15 @@ DISTRO="ubuntu"
 VERSION="24.04"
 STACK="LEMP"
 ADMIN_PORT="$ADMIN_PORT"
+ADMIN_PASS="$USER_ADMIN_PASS"
 DATABASE_ADMIN_PASS="$DATABASE_ADMIN_PASS"
 END
 
 chmod -R +x /etc/vpsease/*
+
+if [ -d "/root/vpsease" ]; then
+    rm -rf "/root/vpsease"
+fi
 
 clear
 

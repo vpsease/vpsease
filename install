@@ -52,13 +52,6 @@ get_os_version() {
     echo "$dist_version"
 }
 
-read -p "This is a trial version. Do you want to proceed with the installation? [y/N]:" INSTALL_CONFIRMATION
-INSTALL_CONFIRMATION=${INSTALL_CONFIRMATION:-n}
-if [[ "$INSTALL_CONFIRMATION" != "y" && "$INSTALL_CONFIRMATION" != "Y" ]]; then
-    echo "Installation aborted."
-    exit 0
-fi
-
 if [ "$(id -u)" -ne 0 ]; then
     echo "You are required to have root privileges for this command. Execute "sudo su" to gain root access."
     exit
